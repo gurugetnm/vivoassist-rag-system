@@ -1,0 +1,7 @@
+# llamaindex-rag-project/.gitignore
+venv/
+__pycache__/
+.env
+chroma_db/
+data/processed/
+*.log

@@ -1,0 +1,17 @@
+# Core
+llama-index>=0.10.0
+
+# Azure OpenAI integrations
+llama-index-llms-azure-openai>=0.2.0
+llama-index-embeddings-azure-openai>=0.2.0
+
+# Vector store (persistent)
+llama-index-vector-stores-chroma>=0.1.0
+chromadb>=0.4.24
+
+# PDF reading
+llama-index-readers-file>=0.1.0
+pypdf>=4.0.0
+
+# Environment variables
+python-dotenv>=1.0.0
