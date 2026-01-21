@@ -9,7 +9,7 @@ def load_pdfs(data_dir: str) -> List[Document]:
     Load ALL PDFs from a directory, but parse each PDF per-page
     (so metadata like page_label is available).
     """
-    pdf_reader = PDFReader(return_full_document=False)  # per-page docs
+    pdf_reader = PDFReader(return_full_document=False) 
 
     reader = SimpleDirectoryReader(
         input_dir=data_dir,

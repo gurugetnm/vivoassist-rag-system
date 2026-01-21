@@ -42,22 +42,19 @@ def select_manual_from_question(
         matched = None
 
         for token in entry.tokens:
-            # ---- exact whole-word match
+
             if re.search(rf"\b{re.escape(token)}\b", q):
                 score += 1.0
                 matched = token
                 continue
 
-            # ---- fuzzy match against individual words (misspelling tolerance)
-            # Only fuzzy-match reasonably long words
             if len(token) >= 4:
                 for w in words:
                     if len(w) >= 4 and _similar(w, token) >= 0.88:
-                        score += 0.9  # slightly lower than exact match
+                        score += 0.9
                         matched = token
                         break
 
-        # tie-break: higher score wins
         if score > best_score:
             best_score = score
             best_file = file_name

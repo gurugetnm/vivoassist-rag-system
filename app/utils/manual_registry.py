@@ -1,4 +1,3 @@
-# app/utils/manual_registry.py
 from __future__ import annotations
 
 import re
@@ -21,10 +20,10 @@ def _tokenize(text: str) -> List[str]:
             continue
         if p in _STOPWORDS:
             continue
-        # ignore pure years like 2014, 2021
+        
         if p.isdigit() and len(p) == 4:
             continue
-        # ✅ NEW: ignore very short tokens (like "c", "x", "s")
+      
         if len(p) < 3:
             continue
         toks.append(p)
@@ -34,9 +33,9 @@ def _tokenize(text: str) -> List[str]:
 
 @dataclass(frozen=True)
 class ManualEntry:
-    file_name: str          # e.g. "2014_outlander.pdf"
-    stem: str               # e.g. "2014_outlander"
-    tokens: Set[str]        # e.g. {"outlander"}
+    file_name: str          
+    stem: str               
+    tokens: Set[str]       
 
 
 def build_manual_registry(data_dir: str) -> Dict[str, ManualEntry]:
