@@ -9,6 +9,7 @@ from app.index.chroma_store import get_chroma_vector_store
 from app.index.index_builder import build_and_persist_index, load_index_from_chroma
 from app.utils.debug import print_chunk_counts, preview_nodes
 from app.chat.chat_engine import run_terminal_chat
+from app.utils.manual_registry import build_manual_registry
 
 
 def main():
@@ -29,6 +30,7 @@ def main():
     # Load config + configure LlamaIndex (Azure)
     # -----------------------------
     cfg = load_config()
+    manual_registry = build_manual_registry(cfg.data_dir)
     configure_llamaindex()
 
     # -----------------------------
@@ -94,7 +96,12 @@ def main():
     # -----------------------------
     # Chat
     # -----------------------------
-    run_terminal_chat(index, top_k=cfg.top_k, debug=cfg.debug)
+    run_terminal_chat(
+        index,
+        top_k=cfg.top_k,
+        debug=cfg.debug,
+        manual_registry=manual_registry,
+    )
 
 
 if __name__ == "__main__":

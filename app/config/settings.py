@@ -16,7 +16,7 @@ class AppConfig:
 
     # Retrieval
     top_k: int = 8
-    debug: bool = False
+    debug: bool = True
 
     # Chunking (hierarchical)
     big_chunk_size: int = 1500
