@@ -11,6 +11,9 @@ from app.utils.debug import print_chunk_counts, preview_nodes
 from app.chat.chat_engine import run_terminal_chat
 from app.utils.manual_registry import build_manual_registry
 
+# ✅ NEW IMPORTS (Fix 2)
+from app.utils.models_registry import load_models_cache, build_models_cache
+
 
 def main():
     # -----------------------------
@@ -42,6 +45,12 @@ def main():
             print("🔄 Rebuilding vector index (deleting ChromaDB)...")
             shutil.rmtree(chroma_path)
 
+        # also delete model cache when rebuilding
+        cache_file = Path(cfg.chroma_dir) / "models_cache.json"
+        if cache_file.exists():
+            print("🧹 Deleting models cache...")
+            cache_file.unlink()
+
     # -----------------------------
     # Chroma setup (persistent on disk)
     # -----------------------------
@@ -57,7 +66,8 @@ def main():
 
     if existing > 0:
         print(
-            f"Chroma already has {existing} items. Loading index from disk...\n")
+            f"Chroma already has {existing} items. Loading index from disk...\n"
+        )
         index = load_index_from_chroma(vector_store)
 
     else:
@@ -94,15 +104,30 @@ def main():
         )
 
     # -----------------------------
+    # Build / load models cache (Fix 2)
+    # -----------------------------
+    cache_path = Path(cfg.chroma_dir) / "models_cache.json"
+
+    models_cache = load_models_cache(str(cache_path))
+    if not models_cache:
+        print("📦 Building models cache (first run)...")
+        models_cache = build_models_cache(
+            index,
+            data_dir=cfg.data_dir,
+            cache_path=str(cache_path),
+            per_manual_top_k=40,
+        )
+
+    # -----------------------------
     # Chat
     # -----------------------------
     run_terminal_chat(
         index,
         top_k=cfg.top_k,
         debug=cfg.debug,
-        manual_registry=manual_registry,
+        data_dir=cfg.data_dir,
+        models_cache=models_cache,
     )
-
 
 if __name__ == "__main__":
     main()
