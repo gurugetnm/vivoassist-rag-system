@@ -5,6 +5,7 @@ from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
 
 from llama_index.core import VectorStoreIndex
+from llama_index.core.vector_stores.types import MetadataFilter, MetadataFilters
 
 
 SYSTEM_PROMPT = """
@@ -20,6 +21,10 @@ Rules:
 """
 
 NOT_FOUND = "Not found in the manual."
+
+# Change this if you run the server on a different port or serve PDFs elsewhere.
+# Example: python -m http.server 8000  (from your project root)
+PDF_BASE_URL = "http://localhost:8000/data/manuals"
 
 
 # -----------------------------
@@ -37,7 +42,8 @@ def _extract_sources(resp) -> List[Tuple[str, Optional[str]]]:
         node = getattr(sn, "node", sn)
         meta = getattr(node, "metadata", {}) or {}
         file_name = meta.get("file_name", "unknown_file")
-        page = meta.get("page_label") or meta.get("page_number") or meta.get("page")
+        page = meta.get("page_label") or meta.get(
+            "page_number") or meta.get("page")
         out.append((file_name, str(page) if page is not None else None))
     return out
 
@@ -47,11 +53,16 @@ def _is_models_question(q: str) -> bool:
 
     # 1) Hard block: page-specific / content questions should NEVER hit fast-path
     page_patterns = [
-        "page ", "page:", "on page", "say on page", "says on page", "what does", "what is on page"
+        "page ",
+        "page:",
+        "on page",
+        "say on page",
+        "says on page",
+        "what does",
+        "what is on page",
     ]
     if any(p in qn for p in page_patterns):
         return False
-    # also block patterns like "p. 1", "p 1"
     if re.search(r"\bp\.?\s*\d+\b", qn):
         return False
 
@@ -62,17 +73,13 @@ def _is_models_question(q: str) -> bool:
 
     # 3) Inventory subject (models/manuals)
     subject = any(
-        k in qn for k in [
-            "models", "model", "vehicle models",
-            "manuals", "manual list", "documents", "pdfs"
-        ]
+        k in qn for k in ["models", "model", "vehicle models", "manuals", "manual list", "documents", "pdfs"]
     )
 
     # 4) Light typo tolerance only around "models"
     typo_model = any(k in qn for k in ["modesl", "modles"])
 
     return (list_intent and subject) or (list_intent and typo_model)
-
 
 
 def _split_models_and_rest(q: str) -> Tuple[bool, str]:
@@ -88,40 +95,58 @@ def _split_models_and_rest(q: str) -> Tuple[bool, str]:
     """
     qn = q.strip()
 
-    # Only split if it looks like it's asking for models/manuals
     if not _is_models_question(qn):
         return False, ""
 
-    # Split on common conjunctions. Keep it conservative.
-    parts = re.split(r"\s+\band\b\s+|\s+\bthen\b\s+", qn, maxsplit=1, flags=re.IGNORECASE)
+    parts = re.split(
+        r"\s+\band\b\s+|\s+\bthen\b\s+",
+        qn,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )
     if len(parts) < 2:
         return False, ""
 
     remainder = parts[1].strip()
-    # If remainder is too short, ignore
     if len(remainder) < 5:
         return False, ""
 
     return True, remainder
 
 
-def _print_models_from_cache(models_cache: Dict, *, debug: bool) -> bool:
+def build_pdf_link(base_url: str, file_name: str, page: int | str) -> str:
+    return f"{base_url}/{file_name}#page={page}"
+
+
+def _print_models_from_cache(models_cache: Dict, *, debug: bool, manual_id: Optional[str] = None) -> bool:
     """
     Prints the model list from cache.
+    If manual_id is provided, only prints models for that manual.
     Returns True if anything printed, else False.
     """
     if debug:
         print("✅ FAST PATH: using models_cache\n")
 
-    print("Assistant: Models found across all manuals:\n")
+    if manual_id:
+        print(f"Assistant: Models found in selected manual ({manual_id}):\n")
+    else:
+        print("Assistant: Models found across all manuals:\n")
 
     found_any = False
-    for file_name, data in (models_cache or {}).items():
+
+    # If locked to a manual, only show that manual's cached models (if present)
+    items = models_cache or {}
+    if manual_id is not None:
+        items = {manual_id: items.get(
+            manual_id, {})} if manual_id in items else {}
+
+    for file_name, data in items.items():
         for m in data.get("models", []):
             found_any = True
             pages = m.get("pages") or []
             if pages:
-                print(f"- {m['name']} | {file_name} (pages: {', '.join(pages)})")
+                print(
+                    f"- {m['name']} | {file_name} (pages: {', '.join(pages)})")
             else:
                 print(f"- {m['name']} | {file_name}")
 
@@ -130,6 +155,30 @@ def _print_models_from_cache(models_cache: Dict, *, debug: bool) -> bool:
 
     print()
     return found_any
+
+
+def _print_sources_with_links(sources: List[Tuple[str, Optional[str]]], *, base_url: str) -> None:
+    """
+    Print grouped sources with direct-to-page PDF links.
+    """
+    grouped = defaultdict(set)
+    for f, p in sources:
+        if p is not None:
+            grouped[f].add(str(p))
+
+    if not grouped:
+        return
+
+    print("Sources:")
+    for f, pages in grouped.items():
+        pages_sorted = sorted(pages, key=lambda x: int(x)
+                              if x.isdigit() else x)
+
+        print(f"- {f} (pages: {', '.join(pages_sorted)})")
+        for p in pages_sorted:
+            link = build_pdf_link(base_url, f, p)
+            print(f"  • page {p}: {link}")
+    print()
 
 
 # -----------------------------
@@ -142,13 +191,34 @@ def run_terminal_chat(
     debug: bool,
     data_dir: str,
     models_cache: dict,
+    # ✅ NEW: lock retrieval to one manual (recommended)
+    manual_id: Optional[str] = None,
 ):
-    chat_engine = index.as_chat_engine(
-        similarity_top_k=top_k,
-        system_prompt=SYSTEM_PROMPT,
-    )
+    """
+    If manual_id is provided, retrieval is filtered to that manual using node metadata:
+      metadata["manual_id"] == manual_id
 
-    print("Chat ready. Type 'exit' to quit.\n")
+    IMPORTANT:
+    - Your ingestion (pdf_loader) must set metadata["manual_id"] for ALL pages/nodes.
+    - You must rebuild the index after adding new metadata.
+    """
+    # ✅ Build a retriever (optionally filtered) and pass into chat_engine
+    if manual_id:
+        filters = MetadataFilters(
+            filters=[MetadataFilter(key="manual_id", value=manual_id)])
+        retriever = index.as_retriever(similarity_top_k=top_k, filters=filters)
+        chat_engine = index.as_chat_engine(
+            retriever=retriever,
+            system_prompt=SYSTEM_PROMPT,
+        )
+        print(
+            f"Chat ready. Manual locked to: {manual_id}. Type 'exit' to quit.\n")
+    else:
+        chat_engine = index.as_chat_engine(
+            similarity_top_k=top_k,
+            system_prompt=SYSTEM_PROMPT,
+        )
+        print("Chat ready. Type 'exit' to quit.\n")
 
     while True:
         q = input("You: ").strip()
@@ -160,9 +230,9 @@ def run_terminal_chat(
         # -------------------------------------------------
         is_mixed, remainder = _split_models_and_rest(q)
         if is_mixed:
-            _print_models_from_cache(models_cache, debug=debug)
+            _print_models_from_cache(
+                models_cache, debug=debug, manual_id=manual_id)
 
-            # Now answer the remainder using normal RAG
             resp = chat_engine.chat(remainder)
             resp_text = str(resp).strip()
             print(f"Assistant: {resp_text}\n")
@@ -171,27 +241,15 @@ def run_terminal_chat(
                 continue
 
             sources = _extract_sources(resp)
-            if sources:
-                grouped = defaultdict(set)
-                for f, p in sources:
-                    if p is not None:
-                        grouped[f].add(str(p))
-
-                print("Sources:")
-                for f, pages in grouped.items():
-                    if pages:
-                        pages_sorted = sorted(pages, key=lambda x: int(x) if x.isdigit() else x)
-                        print(f"- {f} (pages: {', '.join(pages_sorted)})")
-                    else:
-                        print(f"- {f}")
-                print()
+            _print_sources_with_links(sources, base_url=PDF_BASE_URL)
             continue
 
         # -------------------------------------------------
         # FAST PATH: only models/manuals list
         # -------------------------------------------------
         if _is_models_question(q):
-            _print_models_from_cache(models_cache, debug=debug)
+            _print_models_from_cache(
+                models_cache, debug=debug, manual_id=manual_id)
             continue
 
         # -------------------------------------------------
@@ -205,17 +263,4 @@ def run_terminal_chat(
             continue
 
         sources = _extract_sources(resp)
-        if sources:
-            grouped = defaultdict(set)
-            for f, p in sources:
-                if p is not None:
-                    grouped[f].add(str(p))
-
-            print("Sources:")
-            for f, pages in grouped.items():
-                if pages:
-                    pages_sorted = sorted(pages, key=lambda x: int(x) if x.isdigit() else x)
-                    print(f"- {f} (pages: {', '.join(pages_sorted)})")
-                else:
-                    print(f"- {f}")
-            print()
+        _print_sources_with_links(sources, base_url=PDF_BASE_URL)
