@@ -9,9 +9,7 @@ from app.index.chroma_store import get_chroma_vector_store
 from app.index.index_builder import build_and_persist_index, load_index_from_chroma
 from app.utils.debug import print_chunk_counts, preview_nodes
 from app.chat.chat_engine import run_terminal_chat
-from app.utils.manual_registry import build_manual_registry
 
-# ✅ NEW IMPORTS (Fix 2)
 from app.utils.models_registry import load_models_cache, build_models_cache
 
 
@@ -27,13 +25,20 @@ def main():
         help="Delete ChromaDB and rebuild the vector index",
     )
 
+    # ✅ NEW: manual scope lock from CLI
+    parser.add_argument(
+        "--manual-id",
+        type=str,
+        default=None,
+        help="Lock chat retrieval to a specific manual_id (PDF file name).",
+    )
+
     args = parser.parse_args()
 
     # -----------------------------
     # Load config + configure LlamaIndex (Azure)
     # -----------------------------
     cfg = load_config()
-    manual_registry = build_manual_registry(cfg.data_dir)
     configure_llamaindex()
 
     # -----------------------------
@@ -65,15 +70,17 @@ def main():
     existing = collection.count()
 
     if existing > 0:
-        print(
-            f"Chroma already has {existing} items. Loading index from disk...\n"
-        )
+        print(f"Chroma already has {existing} items. Loading index from disk...\n")
         index = load_index_from_chroma(vector_store)
 
     else:
         print("Chroma collection is empty. Building index (first run)...\n")
 
         docs = load_pdfs(cfg.data_dir)
+        print("Total docs:", len(docs))
+        print("OCR docs:", sum(1 for d in docs if d.metadata.get("is_ocr")))
+        print("Manual IDs:", sorted({d.metadata.get("manual_id") for d in docs})[:10])
+
         print("\n--- LOADED FILES ---")
         files = sorted({d.metadata.get("file_name", "unknown") for d in docs})
         for f in files:
@@ -104,7 +111,7 @@ def main():
         )
 
     # -----------------------------
-    # Build / load models cache (Fix 2)
+    # Build / load models cache
     # -----------------------------
     cache_path = Path(cfg.chroma_dir) / "models_cache.json"
 
@@ -119,6 +126,24 @@ def main():
         )
 
     # -----------------------------
+    # Decide manual scope lock
+    # -----------------------------
+    manual_id = args.manual_id
+
+    # ✅ If user didn't specify manual_id, and there is only ONE manual, auto-lock
+    if not manual_id:
+        manuals = sorted((models_cache or {}).keys())
+        if len(manuals) == 1:
+            manual_id = manuals[0]
+            print(f"🔒 Auto-locking to the only manual found: {manual_id}\n")
+
+    # If user passed a manual_id that isn't in cache, warn (but still run without lock)
+    if manual_id and manual_id not in (models_cache or {}):
+        print(f"⚠️ manual_id not found in models_cache: {manual_id}")
+        print("   Running without manual lock.\n")
+        manual_id = None
+
+    # -----------------------------
     # Chat
     # -----------------------------
     run_terminal_chat(
@@ -127,7 +152,9 @@ def main():
         debug=cfg.debug,
         data_dir=cfg.data_dir,
         models_cache=models_cache,
+        manual_id=manual_id, 
     )
+
 
 if __name__ == "__main__":
     main()

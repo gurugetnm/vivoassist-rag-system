@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Tuple
 
 from llama_index.core import VectorStoreIndex
 
+# LlamaIndex filter imports (version-safe)
 try:
     from llama_index.core.vector_stores import MetadataFilters, ExactMatchFilter
 except Exception:
@@ -17,9 +18,10 @@ except Exception:
 NOT_FOUND = "Not found in the manual."
 
 
-# -----------------------------
+# =========================================================
 # Helpers
-# -----------------------------
+# =========================================================
+
 def _extract_sources(resp) -> List[Tuple[str, Optional[str]]]:
     srcs = getattr(resp, "source_nodes", None) or getattr(resp, "sources", None) or []
     out: List[Tuple[str, Optional[str]]] = []
@@ -32,48 +34,64 @@ def _extract_sources(resp) -> List[Tuple[str, Optional[str]]]:
     return out
 
 
-# Basic “not a vehicle model” filter (keeps you safe from iPhone/iPod lists & specs)
+# Generic junk filters (works for vehicle + telco manuals)
 _DENY_KEYWORDS = [
-    "iphone", "ipod", "ipad", "android", "galaxy", "pixel",
-    "generation", "gb", "bluetooth", "usb",
-    "engine", "transmission",
+    "appendix", "table", "figure", "revision", "rev.", "copyright",
+    "all rights reserved", "contents", "index",
+    "part number", "p/n", "serial", "firmware", "software version",
+    "specification", "specifications", "dimensions",
+    "compatible", "compatibility",
 ]
 
 
-def _is_valid_vehicle_model(name: str) -> bool:
+def _is_valid_subject(name: str) -> bool:
     n = (name or "").strip().lower()
     if not n:
         return False
     if any(bad in n for bad in _DENY_KEYWORDS):
         return False
-    # avoid very short junk
-    if len(n) < 3:
+    # avoid very short junk like "tv", "pc"
+    if len(n) < 4:
+        return False
+    # avoid pure numbers
+    if re.fullmatch(r"\d+", n):
         return False
     return True
 
 
-def _parse_models(text: str) -> List[str]:
+def _parse_subjects(text: str) -> List[str]:
+    """
+    Parse a comma/newline separated list of subject/product names.
+    """
     t = (text or "").strip()
     if not t or NOT_FOUND.lower() in t.lower():
         return []
 
-    # split on commas / new lines / semicolons / bullet points
     parts = re.split(r",|\n|;|\u2022", t)
-    models: List[str] = []
+    subjects: List[str] = []
+
     for p in parts:
         s = re.sub(r"^[-•\*]\s*", "", p.strip())
         if not s:
             continue
+
         # strip common prefixes
-        s = re.sub(r"^(model|vehicle|manual)\s*:\s*", "", s, flags=re.I).strip()
+        s = re.sub(r"^(model|vehicle|manual|product|system)\s*:\s*", "", s, flags=re.I).strip()
+        s = re.sub(r"\s+", " ", s).strip()
+
         if not s:
             continue
-        if _is_valid_vehicle_model(s) and s not in models:
-            models.append(s)
-    return models
+
+        if _is_valid_subject(s) and s not in subjects:
+            subjects.append(s)
+
+    return subjects
 
 
 def load_models_cache(cache_path: str) -> Dict:
+    """
+    Backwards compatible: keep name 'models_cache.json' if your app expects it.
+    """
     p = Path(cache_path)
     if not p.exists():
         return {}
@@ -105,32 +123,26 @@ def _safe_query(qe, prompt: str, *, max_retries: int = 8, base_sleep: float = 2.
 
             sleep_s = base_sleep * (2 ** (attempt - 1))
             sleep_s = min(sleep_s, 60.0)
-            print(f"[MODEL CACHE] Retry {attempt}/{max_retries} after {sleep_s:.1f}s due to: {e}")
+            print(f"[MODELS CACHE] Retry {attempt}/{max_retries} after {sleep_s:.1f}s due to: {e}")
             time.sleep(sleep_s)
     raise last_err
 
 
 def _title_from_filename(file_name: str) -> str:
     """
-    Convert filename to a readable model name:
+    Convert filename to a readable title:
       lancer_2012.pdf -> Lancer 2012
-      2008_crv.pdf -> 2008 Crv
-      chr_2021.pdf -> Chr 2021
-    You can optionally add brand mapping later.
+      Telecom System IOM Procedure - Starlink System.pdf -> Telecom System IOM Procedure - Starlink System
     """
-    stem = Path(file_name).stem  # remove .pdf
+    stem = Path(file_name).stem
     s = stem.replace("-", " ").replace("_", " ").strip()
     s = re.sub(r"\s+", " ", s)
+    return s.strip()
 
-    # Make it title-ish without destroying acronyms too much
-    words = []
-    for w in s.split():
-        if w.isupper() or any(c.isdigit() for c in w):
-            words.append(w.upper() if len(w) <= 4 and w.isalpha() else w)
-        else:
-            words.append(w.capitalize())
-    return " ".join(words).strip()
 
+# =========================================================
+# Cache Builder
+# =========================================================
 
 def build_models_cache(
     index: VectorStoreIndex,
@@ -143,12 +155,17 @@ def build_models_cache(
 ) -> Dict:
     """
     Resume-safe incremental cache builder.
-    - First tries to extract primary vehicle model(s) from the manual text (strict).
-    - If nothing explicit found, falls back to filename (marked inferred).
-    - Writes cache after each PDF.
+
+    NEW behavior (generic, works for vehicle + telco manuals):
+    - Tries to extract the PRIMARY product/system/vehicle this manual is for
+    - If nothing explicit found, falls back to filename (marked inferred)
+    - Writes cache after each PDF (resume-safe)
+
+    Output format stays compatible with your existing code:
+      cache[file_name]["models"] = [{name, pages, inferred}]
+    (You can rename later, but this avoids breaking other files.)
     """
     pdfs = sorted(Path(data_dir).glob("*.pdf"))
-
     cache: Dict = load_models_cache(cache_path) or {}
 
     for i, pdf in enumerate(pdfs, start=1):
@@ -158,29 +175,34 @@ def build_models_cache(
         if file_name in cache:
             continue
 
-        print(f"[MODEL CACHE] Scanning {file_name}")
+        print(f"[MODELS CACHE] Scanning {file_name}")
 
         filters = MetadataFilters(filters=[ExactMatchFilter(key="file_name", value=file_name)])
         qe = index.as_query_engine(similarity_top_k=per_manual_top_k, filters=filters)
 
         prompt = (
-            "This is an owner's manual.\n\n"
-            "Identify ONLY the PRIMARY VEHICLE MODEL(S) that this manual is written for "
-            '(example: "Honda City 2017", "Toyota Prius C").\n'
-            "Look specifically at cover/title pages and sections like 'this manual applies to'.\n\n"
-            "Do NOT include:\n"
-            "- mobile phones / iPod / iPhone\n"
-            "- compatible devices lists\n"
-            "- engine codes / part numbers\n"
-            "- accessories\n\n"
-            f"If the vehicle model is not explicitly stated, say: {NOT_FOUND}\n\n"
-            "Return ONLY the model name(s) as a comma-separated list."
+            "You are analyzing a PDF manual.\n\n"
+            "Task: Identify ONLY the PRIMARY product/system/vehicle that this manual is written for.\n"
+            'Examples:\n'
+            '- "Honda Vezel"\n'
+            '- "GMDSS System"\n'
+            '- "Starlink System"\n'
+            '- "Inmarsat FleetBroadband"\n\n'
+            "Look specifically at cover/title pages and headings.\n\n"
+            "Do NOT return:\n"
+            "- tables of contents\n"
+            "- section titles\n"
+            "- part numbers / serial numbers\n"
+            "- firmware/software version strings\n"
+            "- compatible devices lists\n\n"
+            f"If the primary subject is not explicitly stated, say: {NOT_FOUND}\n\n"
+            "Return ONLY the name(s) as a comma-separated list."
         )
 
         resp = _safe_query(qe, prompt, max_retries=8, base_sleep=2.0)
 
         txt = str(resp).strip()
-        names = _parse_models(txt)
+        names = _parse_subjects(txt)
 
         # Collect pages only if we got manual-explicit names
         if names:
@@ -192,7 +214,6 @@ def build_models_cache(
                 "models": [{"name": n, "pages": pages, "inferred": False} for n in names]
             }
         else:
-            # ✅ Fallback: infer from filename (transparent)
             inferred_name = _title_from_filename(file_name)
             cache[file_name] = {
                 "models": [{"name": f"{inferred_name} (inferred from filename)", "pages": [], "inferred": True}]
@@ -206,5 +227,5 @@ def build_models_cache(
         if i % throttle_every == 0:
             time.sleep(throttle_sleep)
 
-    print(f"[MODEL CACHE] Saved → {cache_path}")
+    print(f"[MODELS CACHE] Saved → {cache_path}")
     return cache
