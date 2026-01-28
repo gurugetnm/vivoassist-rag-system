@@ -156,8 +156,8 @@ def build_models_cache(
     """
     Resume-safe incremental cache builder.
 
-    NEW behavior (generic, works for vehicle + telco manuals):
-    - Tries to extract the PRIMARY product/system/vehicle this manual is for
+    NEW behavior (generic, works for  telco manuals):
+    - Tries to extract the PRIMARY product/system this manual is for
     - If nothing explicit found, falls back to filename (marked inferred)
     - Writes cache after each PDF (resume-safe)
 
@@ -182,9 +182,8 @@ def build_models_cache(
 
         prompt = (
             "You are analyzing a PDF manual.\n\n"
-            "Task: Identify ONLY the PRIMARY product/system/vehicle that this manual is written for.\n"
+            "Task: Identify ONLY the PRIMARY product/system that this manual is written for.\n"
             'Examples:\n'
-            '- "Honda Vezel"\n'
             '- "GMDSS System"\n'
             '- "Starlink System"\n'
             '- "Inmarsat FleetBroadband"\n\n'
