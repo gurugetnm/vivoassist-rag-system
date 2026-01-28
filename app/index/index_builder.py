@@ -1,4 +1,3 @@
-# app/index/index_builder.py
 import time
 from llama_index.core import StorageContext, VectorStoreIndex
 from llama_index.vector_stores.chroma import ChromaVectorStore
@@ -34,7 +33,6 @@ def build_and_persist_index(
             batch.clear()
             time.sleep(throttle_sleep)
 
-    # Insert remaining nodes
     if batch:
         if index is None:
             index = VectorStoreIndex(batch, storage_context=storage_context)

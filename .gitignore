@@ -1,4 +1,3 @@
-# llamaindex-rag-project/.gitignore
 venv/
 __pycache__/
 .env
