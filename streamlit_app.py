@@ -29,10 +29,10 @@ def load_all():
     vector_store, collection = get_chroma_vector_store(
         cfg.chroma_dir, cfg.chroma_collection
     )
+
+    # ✅ Cloud-safe: don't crash if DB is empty
     if collection.count() <= 0:
-        raise RuntimeError(
-            "Chroma collection is empty. Build the index first (python -m app.main)."
-        )
+        return cfg, None, None, []
 
     index = load_index_from_chroma(vector_store)
 
@@ -63,6 +63,7 @@ def sources_markdown(resp) -> str:
 
     lines = []
     for f, pages in grouped.items():
+
         def _key(x: str):
             return int(x) if x.isdigit() else 10**9
 
@@ -81,14 +82,36 @@ def get_engine(index, top_k: int, manual_id: str | None):
     key = (manual_id, int(top_k))
 
     if key not in engine_cache:
-        engine_cache[key] = _build_engine(
-            index, top_k=int(top_k), manual_id=manual_id)
+        engine_cache[key] = _build_engine(index, top_k=int(top_k), manual_id=manual_id)
 
     return engine_cache[key]
 
 
 def main():
     cfg, index, models_cache, manuals = load_all()
+
+    # ✅ If no index yet, show friendly instructions (don’t crash)
+    if index is None:
+        st.title("📘 VivoAssist Demo")
+        st.warning("Chroma collection is empty — no index found.")
+        st.markdown(
+            """
+### What to do next
+
+This deployment starts with an empty database.
+
+**Option A (recommended for demo):**
+- Run indexing locally:
+  - `python -m app.main`
+- Then deploy with a persistent Chroma directory (Render/VPS), **or** commit a small prebuilt index (not ideal).
+
+**Option B (Cloud-friendly):**
+- Add a Streamlit “Build Index” button that uploads manuals and builds Chroma inside the app.
+
+If you want, tell me which option you want and I’ll wire the “Build Index” button into this UI.
+"""
+        )
+        st.stop()
 
     # Session defaults
     st.session_state.setdefault("messages", [])
@@ -144,8 +167,7 @@ def main():
     if lock:
         st.info(f"🔒 Locked to: **{lock}**")
     else:
-        st.caption(
-            "No manual lock. I’ll auto-pick a manual if confidence is high.")
+        st.caption("No manual lock. I’ll auto-pick a manual if confidence is high.")
 
     # Render previous messages FIRST
     for msg in st.session_state["messages"]:
@@ -155,7 +177,7 @@ def main():
                 with st.expander("Sources"):
                     st.markdown(msg["sources_md"])
 
-    # Input 
+    # Input
     raw = st.chat_input("Ask a question…")
 
     # If user didn’t submit, stop here
@@ -164,11 +186,10 @@ def main():
 
     q = (raw or "").strip()
     if not q:
-        # Prevent None/empty reaching LlamaIndex retriever
         st.warning("Type a question first.")
         return
 
-    # Show user message immediately 
+    # Show user message immediately
     with st.chat_message("user"):
         st.markdown(q)
 
@@ -184,21 +205,22 @@ def main():
                 st.toast(f"Auto-selected: {matched} ({score:.2f})", icon="✅")
         elif matched and score >= 0.55 and st.session_state["debug"]:
             st.toast(
-                f"Possible: {matched} ({score:.2f}) — lock it in sidebar", icon="💡")
+                f"Possible: {matched} ({score:.2f}) — lock it in sidebar", icon="💡"
+            )
 
     if st.session_state["debug"]:
         st.caption(f"ACTIVE MANUAL: {active_manual or '(none)'}")
 
     # Chat with engine
-    engine = get_engine(index, top_k=int(
-        st.session_state["top_k"]), manual_id=active_manual)
+    engine = get_engine(
+        index, top_k=int(st.session_state["top_k"]), manual_id=active_manual
+    )
 
     with st.chat_message("assistant"):
         try:
-            resp = engine.chat(q)  # q is guaranteed non-empty string here
+            resp = engine.chat(q)
             text = str(resp).strip() or NOT_FOUND
         except Exception as e:
-            # prevent full crash in UI
             text = f"⚠️ Error: {type(e).__name__}: {e}"
             resp = None
 
