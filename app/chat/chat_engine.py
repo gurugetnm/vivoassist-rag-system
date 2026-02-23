@@ -15,7 +15,7 @@ try:
     from llama_index.core.chat_engine import CondensePlusContextChatEngine
 except Exception:
     # Fallback for some versions
-    from llama_index.core.chat_engine.condense_plus_context import (  # type: ignore
+    from llama_index.core.chat_engine.condense_plus_context import ( 
         CondensePlusContextChatEngine,
     )
 
@@ -40,8 +40,8 @@ NOT_FOUND = "Not found in the manual."
 PDF_BASE_URL = "http://localhost:8000/data/manuals"
 
 # Confidence thresholds for auto manual selection
-AUTO_LOCK_THRESHOLD = 0.72   # strong match → auto-select
-SUGGEST_THRESHOLD = 0.55     # weak match → suggest only
+AUTO_LOCK_THRESHOLD = 0.72   # auto-select
+SUGGEST_THRESHOLD = 0.55     # suggest only
 
 
 # =========================================================

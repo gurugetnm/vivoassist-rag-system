@@ -14,7 +14,7 @@ class AppConfig:
     chroma_dir: str = "./chroma_db"
     chroma_collection: str = "pdf_chunks"
     
-    # NEW: local PDF base URL
+    # local PDF base URL
     pdf_base_url: str = "http://localhost:8000/data/manuals"
 
     # Retrieval

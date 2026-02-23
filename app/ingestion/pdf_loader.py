@@ -8,7 +8,7 @@ from llama_index.core.schema import Document
 from llama_index.readers.file import PDFReader
 
 # OCR deps
-import fitz  # PyMuPDF
+import fitz 
 from PIL import Image
 import pytesseract
 import re

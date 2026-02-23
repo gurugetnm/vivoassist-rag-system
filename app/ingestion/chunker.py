@@ -77,8 +77,6 @@ def hierarchical_chunk(
     for d in diagram_docs:
         diagram_meta = extract_diagram_metadata(d.text)
 
-        # ✅ Chroma requires metadata to be FLAT (no lists/dicts).
-        # Convert list fields -> JSON strings.
         diagram_meta_flat = {
             k: (json.dumps(v) if isinstance(v, list) else v)
             for k, v in diagram_meta.items()

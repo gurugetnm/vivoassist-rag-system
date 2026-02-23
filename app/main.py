@@ -25,7 +25,7 @@ def main():
         help="Delete ChromaDB and rebuild the vector index",
     )
 
-    # ✅ NEW: manual scope lock from CLI
+    # manual scope lock from CLI
     parser.add_argument(
         "--manual-id",
         type=str,
@@ -50,7 +50,6 @@ def main():
             print("🔄 Rebuilding vector index (deleting ChromaDB)...")
             shutil.rmtree(chroma_path)
 
-        # also delete model cache when rebuilding
         cache_file = Path(cfg.chroma_dir) / "models_cache.json"
         if cache_file.exists():
             print("🧹 Deleting models cache...")
@@ -130,14 +129,12 @@ def main():
     # -----------------------------
     manual_id = args.manual_id
 
-    # ✅ If user didn't specify manual_id, and there is only ONE manual, auto-lock
     if not manual_id:
         manuals = sorted((models_cache or {}).keys())
         if len(manuals) == 1:
             manual_id = manuals[0]
             print(f"🔒 Auto-locking to the only manual found: {manual_id}\n")
 
-    # If user passed a manual_id that isn't in cache, warn (but still run without lock)
     if manual_id and manual_id not in (models_cache or {}):
         print(f"⚠️ manual_id not found in models_cache: {manual_id}")
         print("   Running without manual lock.\n")
