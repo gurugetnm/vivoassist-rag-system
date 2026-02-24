@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from difflib import SequenceMatcher
 from collections import defaultdict
@@ -37,7 +38,8 @@ Rules:
 """.strip()
 
 NOT_FOUND = "Not found in the manual."
-PDF_BASE_URL = "http://localhost:8000/data/manuals"
+
+PDF_BASE_URL = os.getenv("PDF_BASE_URL", "http://localhost:8000/data/manuals").rstrip("/")
 
 # Confidence thresholds for auto manual selection
 AUTO_LOCK_THRESHOLD = 0.72   # auto-select
@@ -50,12 +52,7 @@ SUGGEST_THRESHOLD = 0.55     # suggest only
 
 FRIENDLY_INTRO = (
     "Hi! I’m **VivoAssist** 👋\n"
-    "I answer questions **only from the manuals you uploaded**.\n\n"
-    "Try:\n"
-    "- `list manuals`\n"
-    "- `use gmdss`\n"
-    "- `use starlink`\n"
-    "- `unlock`\n"
+    "I answer questions only from the manuals you uploaded.\n"
 )
 
 

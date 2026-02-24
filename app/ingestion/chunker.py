@@ -2,7 +2,13 @@ from typing import List, Tuple
 import json
 
 from llama_index.core.node_parser import SentenceSplitter
-from llama_index.core.schema import Document, BaseNode, TextNode
+from llama_index.core.schema import (
+    Document,
+    BaseNode,
+    TextNode,
+    NodeRelationship,
+    RelatedNodeInfo,
+)
 
 from app.ingestion.diagram_extractor import (
     extract_diagram_metadata,
@@ -21,16 +27,20 @@ def hierarchical_chunk(
     small_overlap: int,
 ) -> Tuple[List[BaseNode], List[BaseNode], List[BaseNode], List[BaseNode]]:
     """
-    Creates hierarchical chunks with diagram awareness.
+    True hierarchical chunking with diagram awareness.
 
-    - Text pages → big / mid / small sentence-based chunks
-    - Diagram pages → 1 semantic node per page (no sentence splitting)
+    - Text pages:
+        big chunks (parents)
+          -> mid chunks (children)
+              -> small chunks (leaf children)
+      Relationships are attached using NodeRelationship.PARENT / NodeRelationship.CHILD.
+
+    - Diagram pages:
+        1 node per page (no sentence splitting), tagged chunk_level="diagram"
+        plus extracted diagram metadata and diagram_summary.
 
     Returns:
       (all_nodes, big_nodes, mid_nodes, small_nodes)
-
-    Diagram nodes are included in all_nodes only
-    and tagged with chunk_level="diagram".
     """
 
     # -----------------------------
@@ -46,34 +56,82 @@ def hierarchical_chunk(
             text_docs.append(d)
 
     # -----------------------------
-    # Sentence splitters for TEXT pages
+    # Sentence splitters
     # -----------------------------
     splitter_big = SentenceSplitter(chunk_size=big_size, chunk_overlap=big_overlap)
     splitter_mid = SentenceSplitter(chunk_size=mid_size, chunk_overlap=mid_overlap)
     splitter_small = SentenceSplitter(chunk_size=small_size, chunk_overlap=small_overlap)
 
-    def split_and_tag(
-        splitter: SentenceSplitter,
-        docs: List[Document],
-        level: str,
-    ) -> List[BaseNode]:
-        nodes = splitter.get_nodes_from_documents(docs)
-        for n in nodes:
-            n.metadata["chunk_level"] = level
-        return nodes
+    # -----------------------------
+    # Helper: ensure CHILD relationship is a list
+    # -----------------------------
+    def _ensure_child_list(node: BaseNode) -> List[RelatedNodeInfo]:
+        existing = node.relationships.get(NodeRelationship.CHILD)
+        if existing is None:
+            node.relationships[NodeRelationship.CHILD] = []
+            return node.relationships[NodeRelationship.CHILD]
+        # Some versions may store a single RelatedNodeInfo; normalize to list
+        if isinstance(existing, RelatedNodeInfo):
+            node.relationships[NodeRelationship.CHILD] = [existing]
+            return node.relationships[NodeRelationship.CHILD]
+        return existing  # assume it's already a list
 
     # -----------------------------
-    # Text chunks (unchanged behavior)
+    # 1) BIG nodes (top level)
     # -----------------------------
-    nodes_big = split_and_tag(splitter_big, text_docs, "big")
-    nodes_mid = split_and_tag(splitter_mid, text_docs, "mid")
-    nodes_small = split_and_tag(splitter_small, text_docs, "small")
+    big_nodes: List[BaseNode] = splitter_big.get_nodes_from_documents(text_docs)
+    for n in big_nodes:
+        n.metadata["chunk_level"] = "big"
+        n.metadata["hierarchy_depth"] = 0
 
     # -----------------------------
-    # Diagram nodes (1 node per page)
+    # 2) MID nodes (children of BIG)
+    # -----------------------------
+    mid_nodes: List[BaseNode] = []
+    for big in big_nodes:
+        # Create a temporary "document" from the big chunk so we can split it further.
+        # Keep metadata from big so page/filename/etc stay consistent.
+        tmp_doc = Document(text=big.get_content(), metadata=dict(big.metadata))
+
+        mids = splitter_mid.get_nodes_from_documents([tmp_doc])
+        for mid in mids:
+            mid.metadata["chunk_level"] = "mid"
+            mid.metadata["hierarchy_depth"] = 1
+
+            # link mid -> big (parent)
+            mid.relationships[NodeRelationship.PARENT] = RelatedNodeInfo(node_id=big.node_id)
+
+            # link big -> mid (child)
+            child_list = _ensure_child_list(big)
+            child_list.append(RelatedNodeInfo(node_id=mid.node_id))
+
+        mid_nodes.extend(mids)
+
+    # -----------------------------
+    # 3) SMALL nodes (children of MID)
+    # -----------------------------
+    small_nodes: List[BaseNode] = []
+    for mid in mid_nodes:
+        tmp_doc = Document(text=mid.get_content(), metadata=dict(mid.metadata))
+
+        smalls = splitter_small.get_nodes_from_documents([tmp_doc])
+        for sm in smalls:
+            sm.metadata["chunk_level"] = "small"
+            sm.metadata["hierarchy_depth"] = 2
+
+            # link small -> mid (parent)
+            sm.relationships[NodeRelationship.PARENT] = RelatedNodeInfo(node_id=mid.node_id)
+
+            # link mid -> small (child)
+            child_list = _ensure_child_list(mid)
+            child_list.append(RelatedNodeInfo(node_id=sm.node_id))
+
+        small_nodes.extend(smalls)
+
+    # -----------------------------
+    # 4) Diagram nodes (1 node per page)
     # -----------------------------
     diagram_nodes: List[BaseNode] = []
-
     for d in diagram_docs:
         diagram_meta = extract_diagram_metadata(d.text)
 
@@ -87,6 +145,7 @@ def hierarchical_chunk(
             metadata={
                 **d.metadata,
                 "chunk_level": "diagram",
+                "hierarchy_depth": 0,  # standalone
                 **diagram_meta_flat,
                 "diagram_summary": build_diagram_summary(diagram_meta),
             },
@@ -96,6 +155,6 @@ def hierarchical_chunk(
     # -----------------------------
     # Combine all nodes
     # -----------------------------
-    all_nodes: List[BaseNode] = nodes_big + nodes_mid + nodes_small + diagram_nodes
+    all_nodes: List[BaseNode] = big_nodes + mid_nodes + small_nodes + diagram_nodes
 
-    return all_nodes, nodes_big, nodes_mid, nodes_small
+    return all_nodes, big_nodes, mid_nodes, small_nodes

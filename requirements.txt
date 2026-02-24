@@ -1,17 +1,23 @@
-# Core
+# ---------------- Core ----------------
 llama-index>=0.10.0
 
-# Azure OpenAI integrations
+# ---------------- Azure OpenAI ----------------
 llama-index-llms-azure-openai>=0.2.0
 llama-index-embeddings-azure-openai>=0.2.0
 
-# Vector store (persistent)
+# ---------------- Vector Store ----------------
 llama-index-vector-stores-chroma>=0.1.0
 chromadb>=0.4.24
 
-# PDF reading
+# ---------------- PDF + OCR ----------------
 llama-index-readers-file>=0.1.0
 pypdf>=4.0.0
+pymupdf>=1.23.0
+pillow>=10.0.0
+pytesseract>=0.3.10
 
-# Environment variables
+# ---------------- UI ----------------
+streamlit>=1.32.0
+
+# ---------------- Environment ----------------
 python-dotenv>=1.0.0
